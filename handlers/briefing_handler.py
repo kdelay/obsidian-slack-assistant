@@ -76,7 +76,9 @@ def _build_main_message(today: date, tasks: list, cal_events: list) -> str:
                     parts.append(f"▸ {text}")
                 else:
                     parts.append(text)
-            sections.append(f"\n_{cat}_  " + "  ·  ".join(parts))
+            sections.append(f"\n_{cat}_")
+            for part in parts:
+                sections.append(f"• {part}")
     else:
         sections.append("\n_오늘 등록된 할 일이 없어요._")
 

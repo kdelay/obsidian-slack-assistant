@@ -35,12 +35,12 @@ intent 선택 기준:
 - add_scheduled: 특정 시간이 언급된 일정 추가 ("13시", "오후 3시" 등)
 - complete_task: 완료했다는 표현 ("완료", "했어", "끝났어", "처리했어")
 - add_backlog: 날짜/마감 없이 나중에 할 일 ("나중에", "언젠가", "백로그")
-- query_today: 오늘 할 일 조회
+- query_today: 특정 날짜의 할 일+일정 통합 조회 ("오늘 뭐해?", "내일 할 일", "모레 일정", "3/25 할 일" 등 — "캘린더" 키워드 없이 날짜+할 일/일정을 묻는 경우. target_date에 해당 날짜 입력, 오늘이면 null)
 - query_week: 이번 주 일정 조회
 - query_upcoming: 다가오는 일정/마감 조회
 - log_day: 오늘 한 일/진행중인 일을 여러 개 한꺼번에 보고할 때 (log_tasks 배열로 반환, status는 complete/in_progress/pending)
 - summarize_today: 오늘 한 일 요약 요청
-- query_calendar: 캘린더 일정 조회 ("일정", "미팅", "약속", "캘린더" 등 언급 시)
+- query_calendar: 캘린더 일정만 조회 ("캘린더" 키워드를 명시한 경우만. 예: "캘린더 일정 보여줘", "캘린더에 뭐 있어")
 - list_calendars: 사용 가능한 캘린더 목록 조회 ("캘린더 목록", "어떤 캘린더" 등)
 - set_calendar_filter: 포함할 캘린더 설정 ("캘린더 설정:", "캘린더 필터" 등, calendar_names에 쉼표 구분 목록)
 - query_calendar_filter: 현재 캘린더 설정 확인 ("캘린더 설정 확인", "어떤 캘린더 보고 있어" 등)

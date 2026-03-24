@@ -78,7 +78,9 @@ def _fmt_day(tasks: list, cal_events: list[CalendarEvent]) -> str:
                 parts.append(f"▸ {text}")
             else:
                 parts.append(text)
-        lines.append(f"_{cat}_  " + "  ·  ".join(parts))
+        lines.append(f"_{cat}_")
+        for part in parts:
+            lines.append(f"• {part}")
 
     return "\n".join(lines) if lines else "_(없음)_"
 
@@ -143,10 +145,18 @@ async def handle_message(text: str, say, user: str):
         await say(f"백로그에 추가했어요.\n> {added}")
 
     elif intent == "query_today":
-        tasks = _obsidian.get_tasks(today)
-        cal_events = get_events(today)
+        target_str = intent_data.get("target_date")
+        target = date.fromisoformat(target_str) if target_str else today
+        tasks = _obsidian.get_tasks(target)
+        cal_events = get_events(target)
         pending = sum(1 for t in tasks if not t.is_complete)
-        header = f"*{today.month}/{today.day} ({WEEKDAYS[today.weekday()]}) 오늘*  —  할 일 {len(tasks)}개 · 미완료 {pending}개 · 일정 {len(cal_events)}개"
+        if target == today:
+            label = "오늘"
+        elif target == today + timedelta(days=1):
+            label = "내일"
+        else:
+            label = f"{target.month}/{target.day} ({WEEKDAYS[target.weekday()]})"
+        header = f"*{target.month}/{target.day} ({WEEKDAYS[target.weekday()]}) {label}*  —  할 일 {len(tasks)}개 · 미완료 {pending}개 · 일정 {len(cal_events)}개"
         body = _fmt_day(tasks, cal_events)
         await say(f"{header}\n\n{body}")
 
