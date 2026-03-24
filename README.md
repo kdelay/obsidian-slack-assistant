@@ -117,7 +117,7 @@ https://app.slack.com/client/TXXXXXXXX/D012AB3CD4E
 > 시스템 설정 → 인터넷 계정 → 계정 추가 → Google → 캘린더 활성화
 
 **캘린더 접근 권한**
-> 시스템 설정 → 개인 정보 및 보안 → 캘린더 → `+` 버튼으로 `.venv/bin/python` 추가
+> macOS 캘린더 앱 → 설정 → 계정 → Google 계정 선택 → 위임에서 체크
 
 이후 Slack에서 보여줄 캘린더를 선택합니다:
 ```
