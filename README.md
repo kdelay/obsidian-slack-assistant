@@ -63,6 +63,10 @@ Slack DM으로 할 일을 관리하고, 매일 아침 브리핑을 보내주는 
 
 ### 2단계 — 봇 설치
 
+**터미널 여는 법**: `Cmd + Space` → "터미널" 입력 → Enter
+
+아래 명령어를 터미널에 한 줄씩 붙여넣고 Enter:
+
 ```bash
 git clone https://github.com/kdelay/obsidian-slack-assistant
 cd obsidian-slack-assistant
@@ -75,11 +79,13 @@ pip install -e .
 
 ### 3단계 — 환경변수 설정
 
+터미널에서 실행:
 ```bash
 cp .env.example .env
+open .env
 ```
 
-`.env` 파일을 열어 아래 값을 채웁니다:
+텍스트 편집기로 파일이 열리면 아래 값을 채웁니다:
 
 | 항목 | 설명 |
 |------|------|
