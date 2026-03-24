@@ -82,17 +82,88 @@ cp .env.example .env
 # .env 파일을 열어 각 값 입력
 ```
 
-### 4. macOS Calendar 권한 허용
+### 4. 캘린더 연동
 
-봇을 처음 실행하면 macOS가 Calendar 접근 권한을 요청합니다.
-또는 **시스템 설정 → 개인 정보 및 보안 → 캘린더**에서 Python 바이너리를 수동으로 추가하세요.
+이 봇은 macOS의 **Calendar 앱**에 등록된 모든 캘린더를 읽습니다.
+iCloud / Google / Exchange 등 Calendar 앱에서 보이는 캘린더라면 모두 연동됩니다.
+
+#### iCloud 캘린더
+Apple ID로 macOS에 로그인되어 있으면 자동으로 연동됩니다.
+
+#### Google 캘린더 연동
+
+1. **시스템 설정** → **인터넷 계정** → **계정 추가** → **Google**
+2. Google 계정으로 로그인
+3. **캘린더** 토글 활성화
+4. macOS **캘린더 앱**을 열어 Google 캘린더가 보이는지 확인
+
+#### macOS Calendar 접근 권한 허용
+
+봇이 캘린더를 읽으려면 Python 실행 파일에 권한을 부여해야 합니다.
 
 ```bash
 # venv Python 경로 확인
-which python  # .venv/bin/python3.x
+which python  # 예: /path/to/.venv/bin/python3.x
 ```
 
-### 5. 실행
+**시스템 설정 → 개인 정보 및 보안 → 캘린더** → `+` 버튼으로 위 경로의 Python 바이너리 추가
+
+> 봇을 처음 실행하면 macOS가 자동으로 권한 요청 팝업을 띄우기도 합니다.
+
+#### 연결된 캘린더 확인
+
+봇 실행 후 Slack에서 확인:
+```
+캘린더 목록
+```
+
+#### 특정 캘린더만 표시
+
+```
+캘린더 설정: 개인, 회사, 운동
+```
+
+`calendar_filter.json`에 저장되며 재시작 없이 즉시 반영됩니다.
+
+#### 팀 캘린더 참석자 필터 (선택)
+
+팀 공유 캘린더에서 **내가 참석자로 등록된 일정만** 보고 싶을 때:
+
+`calendar_filter.json`을 직접 수정하거나, 초기 설정 시 아래와 같이 구성합니다:
+
+```json
+{
+  "include": ["개인", "팀 캘린더"],
+  "attendee_filter": {
+    "팀 캘린더": "my-email@company.com"
+  }
+}
+```
+
+### 5. SLACK_CHANNEL_ID 확인
+
+브리핑 DM을 전송하려면 봇과의 DM 채널 ID(`D`로 시작)가 필요합니다.
+
+1. `SLACK_CHANNEL_ID` 없이 봇을 먼저 실행
+2. 봇에게 DM 한 번 전송
+3. 로그에서 채널 ID 확인:
+```bash
+grep "DM 수신" logs/bot.log
+# 예: DM 수신 from=U012AB3CD4E: 안녕 → 이때 event.channel 값이 D...
+```
+
+또는 더 간단하게 — Slack에서 봇과의 DM 채널을 열고 URL에서 확인:
+```
+https://app.slack.com/client/TXXXXXXXX/D012AB3CD4E
+                                        ^^^^^^^^^^^^ 이 부분이 SLACK_CHANNEL_ID
+```
+
+4. `.env`에 추가:
+```
+SLACK_CHANNEL_ID=D012AB3CD4E
+```
+
+### 6. 실행
 
 ```bash
 python main.py
