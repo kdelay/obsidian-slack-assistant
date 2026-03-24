@@ -3,7 +3,7 @@ from datetime import date, timedelta
 
 import re
 
-from config import OBSIDIAN_VAULT, SLACK_USER_ID
+from config import OBSIDIAN_VAULT, SLACK_CHANNEL_ID
 
 _URL_RE = re.compile(r"https?://\S+")
 
@@ -110,7 +110,7 @@ def _build_backlog_message(backlog: dict) -> str:
     return "\n".join(lines)
 
 
-async def send_morning_briefing(app, user_id: str = SLACK_USER_ID):
+async def send_morning_briefing(app, user_id: str = SLACK_CHANNEL_ID):
     today = date.today()
     log.info(f"브리핑 전송 시작: {today}")
 
