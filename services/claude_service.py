@@ -19,14 +19,18 @@ JSON 외에 어떤 텍스트도 추가하지 마세요.
 
 {{
   "intent": "add_task" | "add_scheduled" | "complete_task" | "cancel_task" | "delete_task" |
-            "postpone_task" | "move_from_backlog" | "add_backlog" | "log_day" |
+            "edit_task" | "postpone_task" | "move_from_backlog" | "add_backlog" | "log_day" |
             "query_today" | "query_week" | "query_upcoming" | "query_backlog" |
             "summarize_today" | "weekly_report" | "monthly_summary" | "search_tasks" |
             "query_calendar" | "list_calendars" | "set_calendar_filter" | "query_calendar_filter" |
-            "add_routine" | "list_routines" | "delete_routine" | "unknown",
+            "add_routine" | "list_routines" | "delete_routine" |
+            "resend_briefing" | "cleanup_old" | "unknown",
   "task_text": "태스크 내용 | 검색 키워드 | null",
+  "new_text": "수정할 새 태스크명 | null",
   "scheduled_time": "HH:MM | null",
   "due_date": "YYYY-MM-DD | null",
+  "new_due_date": "YYYY-MM-DD | null",
+  "clear_due_date": true | false,
   "target_date": "YYYY-MM-DD | null",
   "from_date": "YYYY-MM-DD | null",
   "date_range": {{"start": "YYYY-MM-DD", "end": "YYYY-MM-DD"}} | null,
@@ -44,26 +48,29 @@ intent 선택 기준:
 - add_scheduled: 특정 시간이 언급된 일정 추가
 - complete_task: 완료했다는 표현 ("완료", "했어", "끝났어")
 - cancel_task: 취소 ("취소", "안 해도 돼", "드롭")
-- delete_task: 삭제 ("지워줘", "삭제해줘") — cancel_task와 달리 기록 자체를 제거
-- postpone_task: 날짜 연기/이동 ("미뤄줘", "내일로 옮겨줘", "다음 주로 연기") — task_text(태스크명), target_date(이동할 날짜), from_date(원래 날짜, 오늘이면 null)
-- move_from_backlog: 백로그 항목을 오늘/특정 날로 꺼내기 ("백로그에서 ... 오늘로", "... 꺼내줘") — task_text(항목명), target_date(이동할 날짜, 오늘이면 null)
-- add_backlog: 백로그에 새 항목 추가. 여러 개면 backlog_tasks 배열로, 단일이면 task_text
-- query_backlog: 백로그 목록 조회 ("백로그", "백로그 보여줘")
-- log_day: 오늘 한 일 여러 개 한꺼번에 보고 (log_tasks 배열)
-- query_today: 특정 날짜 할 일+일정 통합 조회 (target_date, 오늘이면 null)
+- delete_task: 기록 자체 삭제 ("지워줘", "삭제해줘")
+- edit_task: 태스크 수정 ("이름 바꿔줘", "마감일 변경", "내용 수정") — task_text(기존명), new_text(새 이름, null이면 유지), new_due_date(새 마감일), clear_due_date(마감일 제거 시 true)
+- postpone_task: 날짜 이동 ("미뤄줘", "내일로") — task_text, target_date, from_date
+- move_from_backlog: 백로그→날짜 이동 ("꺼내줘") — task_text, target_date
+- add_backlog: 백로그 추가
+- query_backlog: 백로그 조회
+- log_day: 여러 할 일 한꺼번에 보고
+- query_today: 특정 날짜 할 일+일정 조회 (target_date, 오늘이면 null)
 - query_week: 이번 주 조회
 - query_upcoming: 다가오는 마감 조회
 - summarize_today: 오늘 한 일 요약
-- weekly_report: 주간 보고서 초안 생성 ("주간 보고서", "주간업무보고 작성해줘")
-- monthly_summary: 이번 달 완료 통계 ("이번 달 뭐 했어", "월별 요약") — target_date에 해당 월의 아무 날짜
-- search_tasks: 과거 태스크 검색 ("... 언제 했더라", "... 찾아줘") — task_text에 검색 키워드
-- query_calendar: 캘린더 일정만 조회 ("캘린더" 키워드 명시한 경우만)
+- weekly_report: 주간 보고서 초안
+- monthly_summary: 월별 완료 통계
+- search_tasks: 과거 태스크 검색 (task_text에 키워드)
+- query_calendar: 캘린더 일정 조회 ("캘린더" 키워드 명시 시)
 - list_calendars: 캘린더 목록 조회
 - set_calendar_filter: 포함할 캘린더 설정
 - query_calendar_filter: 현재 캘린더 설정 확인
-- add_routine: 루틴 태스크 등록 ("매일", "매주 월요일마다") — task_text, frequency, weekday, category
-- list_routines: 루틴 목록 조회 ("루틴 보여줘", "반복 태스크 목록")
-- delete_routine: 루틴 삭제 ("루틴 삭제", "... 루틴 없애줘") — task_text에 삭제할 루틴명
+- add_routine: 루틴 등록 (frequency, weekday, category)
+- list_routines: 루틴 목록 조회
+- delete_routine: 루틴 삭제 (task_text에 삭제할 루틴명)
+- resend_briefing: 브리핑 재전송 ("브리핑 다시", "오늘 브리핑 보내줘")
+- cleanup_old: 오래된 미완료 태스크 정리 ("오래된 거 정리", "묵은 태스크 처리")
 - unknown: 위에 해당하지 않음
 
 오늘 날짜: {today}

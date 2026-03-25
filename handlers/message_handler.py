@@ -1,6 +1,11 @@
+import json
+import logging
 import re
 from datetime import date, timedelta
 from difflib import SequenceMatcher
+from pathlib import Path
+
+import anthropic
 
 from config import ANTHROPIC_API_KEY, OBSIDIAN_VAULT
 from services.calendar_service import get_events, get_events_range, get_calendar_names, save_calendar_filter, CalendarEvent
@@ -8,13 +13,38 @@ from services.routine_service import RoutineService
 from services.claude_service import parse_intent, summarize_tasks, generate_weekly_report, generate_monthly_summary
 from services.obsidian_service import ObsidianService
 
+log = logging.getLogger(__name__)
+
 _obsidian = ObsidianService(OBSIDIAN_VAULT)
 _routine = RoutineService(OBSIDIAN_VAULT)
 
 WEEKDAYS = ["월", "화", "수", "목", "금", "토", "일"]
 
-_history: dict[str, list] = {}
-_MAX_HISTORY = 8  # 최대 4회 교환 (user+assistant 쌍)
+_MAX_HISTORY = 8
+_HISTORY_FILE = Path(__file__).parent.parent / "data" / "conversation_history.json"
+
+def _load_history() -> dict:
+    if _HISTORY_FILE.exists():
+        try:
+            return json.loads(_HISTORY_FILE.read_text(encoding="utf-8"))
+        except Exception:
+            return {}
+    return {}
+
+def _save_history(h: dict):
+    _HISTORY_FILE.parent.mkdir(exist_ok=True)
+    _HISTORY_FILE.write_text(json.dumps(h, ensure_ascii=False), encoding="utf-8")
+
+_history: dict[str, list] = _load_history()
+
+# resend_briefing용 (main.py에서 setup() 호출)
+_app = None
+_channel_id: str = ""
+
+def setup(app, channel_id: str):
+    global _app, _channel_id
+    _app = app
+    _channel_id = channel_id
 
 
 _URL_RE = re.compile(r"https?://\S+")
@@ -93,7 +123,19 @@ def _fmt_day(tasks: list, cal_events: list[CalendarEvent]) -> str:
 async def handle_message(text: str, say, user: str):
     today = date.today()
     prev_history = _history.get(user, [])
-    intent_data = parse_intent(text, ANTHROPIC_API_KEY, history=prev_history)
+    try:
+        intent_data = parse_intent(text, ANTHROPIC_API_KEY, history=prev_history)
+    except anthropic.APITimeoutError:
+        await say("Claude API 응답이 너무 느려요. 잠시 후 다시 시도해주세요.")
+        return
+    except (anthropic.APIConnectionError, anthropic.APIError) as e:
+        log.error(f"Claude API 오류: {e}")
+        await say("API 오류가 발생했어요. 잠시 후 다시 시도해주세요.")
+        return
+    except Exception as e:
+        log.error(f"parse_intent 실패: {e}")
+        await say("처리 중 오류가 발생했어요. 잠시 후 다시 시도해주세요.")
+        return
     intent = intent_data.get("intent", "unknown")
     reply = intent_data.get("reply_message", "")
     response_text = ""
@@ -109,6 +151,7 @@ async def handle_message(text: str, say, user: str):
             {"role": "assistant", "content": msg},
         ]
         _history[user] = history[-_MAX_HISTORY:]
+        _save_history(_history)
 
     say = say_and_record
 
@@ -139,7 +182,12 @@ async def handle_message(text: str, say, user: str):
         if ok:
             await say(f"완료 처리했어요. {reply}")
         else:
-            await say(f"'{task_text}'와 일치하는 미완료 태스크를 찾지 못했어요.")
+            candidates = _obsidian.find_similar_tasks(task_date, task_text)
+            if candidates:
+                clist = "\n".join(f"• {c}" for c in candidates)
+                await say(f"'{task_text}'를 찾지 못했어요. 혹시 이 중 하나인가요?\n{clist}")
+            else:
+                await say(f"'{task_text}'와 일치하는 미완료 태스크를 찾지 못했어요.")
 
     elif intent == "log_day":
         log_tasks = intent_data.get("log_tasks") or []
@@ -325,7 +373,12 @@ async def handle_message(text: str, say, user: str):
         if ok:
             await say(f"취소 처리했어요. {reply}")
         else:
-            await say(f"'{task_text}'와 일치하는 태스크를 찾지 못했어요.")
+            candidates = _obsidian.find_similar_tasks(task_date, task_text)
+            if candidates:
+                clist = "\n".join(f"• {c}" for c in candidates)
+                await say(f"'{task_text}'를 찾지 못했어요. 혹시 이 중 하나인가요?\n{clist}")
+            else:
+                await say(f"'{task_text}'와 일치하는 태스크를 찾지 못했어요.")
 
     elif intent == "delete_task":
         task_text = intent_data.get("task_text")
@@ -335,7 +388,12 @@ async def handle_message(text: str, say, user: str):
         if ok:
             await say(f"삭제했어요. {reply}")
         else:
-            await say(f"'{task_text}'와 일치하는 태스크를 찾지 못했어요.")
+            candidates = _obsidian.find_similar_tasks(task_date, task_text)
+            if candidates:
+                clist = "\n".join(f"• {c}" for c in candidates)
+                await say(f"'{task_text}'를 찾지 못했어요. 혹시 이 중 하나인가요?\n{clist}")
+            else:
+                await say(f"'{task_text}'와 일치하는 태스크를 찾지 못했어요.")
 
     elif intent == "postpone_task":
         task_text = intent_data.get("task_text")
@@ -348,7 +406,12 @@ async def handle_message(text: str, say, user: str):
         if ok:
             await say(f"{label}로 이동했어요. {reply}")
         else:
-            await say(f"'{task_text}'와 일치하는 태스크를 찾지 못했어요.")
+            candidates = _obsidian.find_similar_tasks(from_date, task_text)
+            if candidates:
+                clist = "\n".join(f"• {c}" for c in candidates)
+                await say(f"'{task_text}'를 찾지 못했어요. 혹시 이 중 하나인가요?\n{clist}")
+            else:
+                await say(f"'{task_text}'와 일치하는 태스크를 찾지 못했어요.")
 
     elif intent == "move_from_backlog":
         task_text = intent_data.get("task_text")
@@ -359,7 +422,15 @@ async def handle_message(text: str, say, user: str):
         if ok:
             await say(f"백로그에서 {label} 할 일로 옮겼어요. {reply}")
         else:
-            await say(f"'{task_text}'와 일치하는 백로그 항목을 찾지 못했어요.")
+            backlog = _obsidian.get_backlog()
+            candidates = [t.text for tasks in backlog.values() for t in tasks
+                          if task_text.lower() in t.text.lower() or
+                          SequenceMatcher(None, task_text.lower(), t.text.lower()).ratio() >= 0.4][:3]
+            if candidates:
+                clist = "\n".join(f"• {c}" for c in candidates)
+                await say(f"'{task_text}'를 찾지 못했어요. 혹시 이 중 하나인가요?\n{clist}")
+            else:
+                await say(f"'{task_text}'와 일치하는 백로그 항목을 찾지 못했어요.")
 
     elif intent == "search_tasks":
         keyword = intent_data.get("task_text", "")
@@ -417,5 +488,66 @@ async def handle_message(text: str, say, user: str):
         else:
             await say(f"'{task_text}'와 일치하는 루틴을 찾지 못했어요.")
 
+    elif intent == "edit_task":
+        task_text = intent_data.get("task_text")
+        new_text = intent_data.get("new_text")
+        new_due_str = intent_data.get("new_due_date")
+        clear_due = intent_data.get("clear_due_date", False)
+        from_str = intent_data.get("from_date")
+        task_date = date.fromisoformat(from_str) if from_str else today
+        new_due = date.fromisoformat(new_due_str) if new_due_str else None
+        ok, result = _obsidian.edit_task(task_date, task_text,
+                                          new_text=new_text, new_due_date=new_due,
+                                          clear_due_date=bool(clear_due))
+        if ok:
+            await say(f"수정했어요. {reply}\n> {result}")
+        else:
+            candidates = result  # list
+            if candidates:
+                clist = "\n".join(f"• {c}" for c in candidates)
+                await say(f"'{task_text}'를 찾지 못했어요. 혹시 이 중 하나인가요?\n{clist}")
+            else:
+                await say(f"'{task_text}'와 일치하는 태스크를 찾지 못했어요.")
+
+    elif intent == "resend_briefing":
+        if _app and _channel_id:
+            from handlers.briefing_handler import send_morning_briefing
+            await send_morning_briefing(_app, _channel_id)
+        else:
+            await say("브리핑을 다시 보낼 수 없어요.")
+
+    elif intent == "cleanup_old":
+        stale = _obsidian.get_stale_tasks(days=30)
+        if not stale:
+            await say("30일 이상 된 미완료 태스크가 없어요! 👍")
+        else:
+            moved = []
+            for t in stale:
+                _obsidian.add_backlog(t.text, t.category)
+                moved.append(t.text)
+            lines = [f"*오래된 미완료 태스크 {len(moved)}개를 백로그로 이동했어요.*\n"]
+            for text in moved:
+                lines.append(f"• {text}")
+            await say("\n".join(lines))
+
     else:
         await say(reply or "죄송해요, 이해하지 못했어요. 다시 말씀해 주세요.")
+
+
+async def handle_reaction_complete(channel: str, msg_text: str, app_instance):
+    """봇 메시지에 ✅ 리액션 → 오늘 미완료 태스크 목록 DM."""
+    today = date.today()
+    tasks = _obsidian.get_tasks(today)
+    incomplete = [t for t in tasks if not t.is_complete and t.status != "cancelled"]
+    if not incomplete:
+        await app_instance.client.chat_postMessage(
+            channel=channel,
+            text="오늘 미완료 태스크가 없어요. 다 끝낸 거 맞죠? 👍",
+        )
+        return
+    lines = ["✅ 어떤 태스크를 완료할까요?\n"]
+    for i, t in enumerate(incomplete[:10], 1):
+        cat = f"_{t.category}_ " if t.category else ""
+        lines.append(f"`{i}` {cat}{t.text}")
+    lines.append("\n번호나 태스크명으로 말해주세요.")
+    await app_instance.client.chat_postMessage(channel=channel, text="\n".join(lines))

@@ -10,7 +10,7 @@ from slack_bolt.adapter.socket_mode.async_handler import AsyncSocketModeHandler
 
 from config import BRIEFING_HOUR, OBSIDIAN_VAULT, SLACK_APP_TOKEN, SLACK_BOT_TOKEN, SLACK_CHANNEL_ID
 from handlers.briefing_handler import send_morning_briefing
-from handlers.message_handler import handle_message
+from handlers.message_handler import handle_message, handle_reaction_complete, setup as setup_message_handler
 from services.calendar_service import get_events as _get_cal_events
 from services.obsidian_service import ObsidianService as _ObsidianService
 from services.routine_service import RoutineService as _RoutineService
@@ -31,6 +31,7 @@ log = logging.getLogger(__name__)
 
 # ── Slack App ──────────────────────────────────────────────────
 app = AsyncApp(token=SLACK_BOT_TOKEN)
+setup_message_handler(app, SLACK_CHANNEL_ID)
 
 
 @app.event("message")
@@ -45,6 +46,29 @@ async def on_message(event, say):
     user = event.get("user", "")
     log.info(f"DM 수신 from={user}: {text[:60]}")
     await handle_message(text, say, user)
+
+
+@app.event("reaction_added")
+async def on_reaction(event):
+    if event.get("reaction") not in ("white_check_mark", "heavy_check_mark"):
+        return
+    item = event.get("item", {})
+    if item.get("type") != "message":
+        return
+    channel = item.get("channel")
+    if channel != SLACK_CHANNEL_ID:
+        return
+    ts = item.get("ts")
+    try:
+        result = await app.client.conversations_history(
+            channel=channel, latest=ts, inclusive=True, limit=1
+        )
+        messages = result.get("messages", [])
+        if not messages or not messages[0].get("bot_id"):
+            return
+        await handle_reaction_complete(channel, messages[0].get("text", ""), app)
+    except Exception as e:
+        log.error(f"리액션 처리 실패: {e}")
 
 
 _reminded: set[str] = set()  # 이미 알림 보낸 이벤트 키 (date + title)

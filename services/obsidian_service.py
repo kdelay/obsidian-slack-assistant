@@ -508,6 +508,132 @@ class ObsidianService:
                     result.setdefault(current_category, []).append(task)
         return result
 
+    def find_similar_tasks(self, d: date, task_text: str, top: int = 3) -> list:
+        """task_text와 유사한 태스크 후보 목록 반환 (매칭 실패 시 제안용)."""
+        path = self.get_monthly_file(d)
+        lines = self._read_lines(path)
+        start, end = self._find_date_section(lines, d)
+        if start == -1:
+            return []
+        candidates = []
+        for i in range(start, end):
+            ln = lines[i].rstrip()
+            if ln.startswith("\t") or ln.startswith("    "):
+                continue
+            m = _TASK_LINE.match(ln)
+            if not m or m.group(1) == "x":
+                continue
+            content = _DUE_DATE.sub("", _URGENCY.sub("", m.group(2))).strip()
+            sm = _SCHEDULED.match(content)
+            if sm:
+                content = sm.group(2)
+            ratio = SequenceMatcher(None, task_text.lower(), content.lower()).ratio()
+            if ratio >= 0.3:
+                candidates.append((ratio, content))
+        candidates.sort(reverse=True)
+        return [c[1] for c in candidates[:top]]
+
+    def edit_task(
+        self,
+        d: date,
+        old_text: str,
+        new_text: Optional[str] = None,
+        new_due_date: Optional[date] = None,
+        clear_due_date: bool = False,
+    ) -> tuple:
+        """태스크 내용/마감일 수정."""
+        path = self.get_monthly_file(d)
+        lines = self._read_lines(path)
+        start, end = self._find_date_section(lines, d)
+        if start == -1:
+            return False, []
+        best_ratio, best_idx = 0.0, -1
+        for i in range(start, end):
+            ln = lines[i].rstrip()
+            if ln.startswith("\t") or ln.startswith("    "):
+                continue
+            m = _TASK_LINE.match(ln)
+            if not m:
+                continue
+            content = _DUE_DATE.sub("", _URGENCY.sub("", m.group(2))).strip()
+            sm = _SCHEDULED.match(content)
+            if sm:
+                content = sm.group(2)
+            ratio = SequenceMatcher(None, old_text.lower(), content.lower()).ratio()
+            if ratio > best_ratio:
+                best_ratio, best_idx = ratio, i
+        if best_idx == -1 or best_ratio < 0.5:
+            return False, self.find_similar_tasks(d, old_text)
+        ln = lines[best_idx].rstrip()
+        m = _TASK_LINE.match(ln)
+        status_char = m.group(1)
+        raw_content = m.group(2)
+        existing_due = None
+        dm = _DUE_DATE.search(raw_content)
+        if dm:
+            try:
+                existing_due = date.fromisoformat(dm.group(1))
+            except ValueError:
+                pass
+            raw_content = raw_content[:dm.start()].strip()
+        raw_content = _URGENCY.sub("", raw_content).strip()
+        scheduled_prefix = ""
+        sm = _SCHEDULED.match(raw_content)
+        if sm:
+            scheduled_prefix = f"🕐 {sm.group(1)} "
+            raw_content = sm.group(2)
+        final_text = new_text if new_text is not None else raw_content
+        if clear_due_date:
+            final_due = None
+        elif new_due_date is not None:
+            final_due = new_due_date
+        else:
+            final_due = existing_due
+        new_content = f"{scheduled_prefix}{final_text}"
+        if final_due:
+            today = date.today()
+            urgency = "⚠️ " if 0 <= (final_due - today).days <= 3 else ""
+            new_content = f"{urgency}{new_content} 📅 {final_due.strftime('%Y-%m-%d')}"
+        lines[best_idx] = f"- [{status_char}] {new_content}\n"
+        self._write_lines(path, lines)
+        return True, final_text
+
+    def get_stale_tasks(self, days: int = 30) -> list:
+        """days일 이상 미완료 상태인 태스크 목록 (가장 이른 등장 날짜 기준)."""
+        today = date.today()
+        cutoff = today - timedelta(days=days)
+        text_to_earliest: dict = {}
+        for i in range(6):
+            month = today.month - i
+            year = today.year
+            while month <= 0:
+                month += 12
+                year -= 1
+            path = self.todo_root / f"{year}년" / f"{month}월.md"
+            if not path.exists():
+                continue
+            lines = self._read_lines(path)
+            cur_date, cur_cat = None, None
+            for line in lines:
+                ln = line.rstrip()
+                dm = _DATE_HEADER.match(ln)
+                if dm:
+                    cur_date = date(year, int(dm.group(1)), int(dm.group(2)))
+                    cur_cat = None
+                    continue
+                cm = _CATEGORY_HEADER.match(ln)
+                if cm:
+                    cur_cat = cm.group(1)
+                    continue
+                if ln.startswith("- [") and not ln.startswith("\t"):
+                    task = _parse_task_line(ln, d=cur_date, category=cur_cat)
+                    if task and task.status in ("in_progress", "pending") and cur_date:
+                        key = task.text.lower()
+                        if key not in text_to_earliest or cur_date < text_to_earliest[key][0]:
+                            text_to_earliest[key] = (cur_date, task)
+        return [task for earliest_date, task in text_to_earliest.values()
+                if earliest_date <= cutoff]
+
     def _get_category_at(self, lines: list[str], idx: int, section_start: int) -> Optional[str]:
         """특정 인덱스에서 역방향으로 카테고리 헤더 찾기."""
         for i in range(idx - 1, section_start, -1):
