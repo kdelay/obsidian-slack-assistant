@@ -4,10 +4,12 @@ from difflib import SequenceMatcher
 
 from config import ANTHROPIC_API_KEY, OBSIDIAN_VAULT
 from services.calendar_service import get_events, get_events_range, get_calendar_names, save_calendar_filter, CalendarEvent
-from services.claude_service import parse_intent, summarize_tasks
+from services.routine_service import RoutineService
+from services.claude_service import parse_intent, summarize_tasks, generate_weekly_report, generate_monthly_summary
 from services.obsidian_service import ObsidianService
 
 _obsidian = ObsidianService(OBSIDIAN_VAULT)
+_routine = RoutineService(OBSIDIAN_VAULT)
 
 WEEKDAYS = ["월", "화", "수", "목", "금", "토", "일"]
 
@@ -74,7 +76,7 @@ def _fmt_day(tasks: list, cal_events: list[CalendarEvent]) -> str:
                 text = f"`{t.scheduled_time}`  {text}"
             if t.due_date:
                 urgency = " ⚠️" if t.is_urgent else ""
-                text += f"  ~{t.due_date.strftime('%m/%d')}~{urgency}"
+                text += f"  `{t.due_date.strftime('%m/%d')}`{urgency}"
             if t.is_complete or t.status == "cancelled":
                 parts.append(f"~{text}~")
             elif t.status == "in_progress":
@@ -246,7 +248,7 @@ async def handle_message(text: str, say, user: str):
             lines.append(f"_{cat}_")
             for t in cat_tasks:
                 urgency = " ⚠️" if t.is_urgent else ""
-                lines.append(f"• ~{t.due_date.strftime('%m/%d')}~  {t.text}{urgency}")
+                lines.append(f"• `{t.due_date.strftime('%m/%d')}`  {t.text}{urgency}")
         await say("\n".join(lines))
 
     elif intent == "summarize_today":
@@ -314,6 +316,106 @@ async def handle_message(text: str, say, user: str):
             await say(f"현재 포함된 캘린더: *{names_str}*\n\n변경하려면 `캘린더 설정: 캘린더명1, 캘린더명2` 형태로 말씀해 주세요.\n초기화(전체 포함)는 `캘린더 설정 초기화`라고 하면 돼요.")
         else:
             await say("현재 모든 캘린더를 포함하고 있어요.\n\n특정 캘린더만 보려면 `캘린더 설정: 운동, 공부, 중요` 형태로 말씀해 주세요.\n전체 목록은 `캘린더 목록`으로 확인할 수 있어요.")
+
+    elif intent == "cancel_task":
+        task_text = intent_data.get("task_text")
+        from_str = intent_data.get("from_date")
+        task_date = date.fromisoformat(from_str) if from_str else today
+        ok = _obsidian.mark_cancelled(task_date, task_text)
+        if ok:
+            await say(f"취소 처리했어요. {reply}")
+        else:
+            await say(f"'{task_text}'와 일치하는 태스크를 찾지 못했어요.")
+
+    elif intent == "delete_task":
+        task_text = intent_data.get("task_text")
+        from_str = intent_data.get("from_date")
+        task_date = date.fromisoformat(from_str) if from_str else today
+        ok = _obsidian.delete_task(task_date, task_text)
+        if ok:
+            await say(f"삭제했어요. {reply}")
+        else:
+            await say(f"'{task_text}'와 일치하는 태스크를 찾지 못했어요.")
+
+    elif intent == "postpone_task":
+        task_text = intent_data.get("task_text")
+        from_str = intent_data.get("from_date")
+        target_str = intent_data.get("target_date")
+        from_date = date.fromisoformat(from_str) if from_str else today
+        to_date = date.fromisoformat(target_str) if target_str else today + timedelta(days=1)
+        ok = _obsidian.move_task(from_date, task_text, to_date)
+        label = f"{to_date.month}/{to_date.day} ({WEEKDAYS[to_date.weekday()]})"
+        if ok:
+            await say(f"{label}로 이동했어요. {reply}")
+        else:
+            await say(f"'{task_text}'와 일치하는 태스크를 찾지 못했어요.")
+
+    elif intent == "move_from_backlog":
+        task_text = intent_data.get("task_text")
+        target_str = intent_data.get("target_date")
+        target = date.fromisoformat(target_str) if target_str else today
+        ok = _obsidian.move_backlog_to_date(task_text, target)
+        label = "오늘" if target == today else f"{target.month}/{target.day}"
+        if ok:
+            await say(f"백로그에서 {label} 할 일로 옮겼어요. {reply}")
+        else:
+            await say(f"'{task_text}'와 일치하는 백로그 항목을 찾지 못했어요.")
+
+    elif intent == "search_tasks":
+        keyword = intent_data.get("task_text", "")
+        results = _obsidian.search_tasks(keyword)
+        if not results:
+            await say(f"'{keyword}'와 관련된 과거 태스크를 찾지 못했어요.")
+        else:
+            lines = [f"*'{keyword}' 검색 결과 ({len(results)}개)*\n"]
+            for t in results[:15]:
+                d_label = t.task_date.strftime("%m/%d") if t.task_date else "날짜 미상"
+                cat = f"_{t.category}_ " if t.category else ""
+                status_icon = {"complete": "✅", "in_progress": "▸", "cancelled": "~~", "pending": "○"}.get(t.status, "○")
+                lines.append(f"• `{d_label}` {status_icon} {cat}{t.text}")
+            await say("\n".join(lines))
+
+    elif intent == "weekly_report":
+        days_since_sunday = (today.weekday() + 1) % 7
+        sunday = today - timedelta(days=days_since_sunday)
+        saturday = sunday + timedelta(days=6)
+        tasks_by_date = _obsidian.get_tasks_range(sunday, saturday)
+        completed = [t for tasks in tasks_by_date.values() for t in tasks if t.is_complete]
+        report = generate_weekly_report(completed, ANTHROPIC_API_KEY)
+        await say(f"*📋 주간 업무 보고서 초안*\n\n{report}")
+
+    elif intent == "monthly_summary":
+        target_str = intent_data.get("target_date")
+        target = date.fromisoformat(target_str) if target_str else today
+        completed = _obsidian.get_month_completed(target.year, target.month)
+        summary = generate_monthly_summary(completed, target.year, target.month, ANTHROPIC_API_KEY)
+        await say(f"*📊 {target.month}월 완료 통계* ({len(completed)}개)\n\n{summary}")
+
+    elif intent == "add_routine":
+        task_text = intent_data.get("task_text")
+        frequency = intent_data.get("frequency", "daily")
+        weekday = intent_data.get("weekday")
+        category = intent_data.get("category")
+        r = _routine.add_routine(task_text, frequency, category=category, weekday=weekday)
+        await say(f"루틴 등록했어요.\n> {_routine.describe(r)}")
+
+    elif intent == "list_routines":
+        routines = _routine.list_routines()
+        if not routines:
+            await say("등록된 루틴이 없어요.")
+        else:
+            lines = [f"*루틴 목록 ({len(routines)}개)*\n"]
+            for r in routines:
+                lines.append(f"• {_routine.describe(r)}")
+            await say("\n".join(lines))
+
+    elif intent == "delete_routine":
+        task_text = intent_data.get("task_text", "")
+        ok = _routine.delete_routine(task_text)
+        if ok:
+            await say(f"루틴 삭제했어요. {reply}")
+        else:
+            await say(f"'{task_text}'와 일치하는 루틴을 찾지 못했어요.")
 
     else:
         await say(reply or "죄송해요, 이해하지 못했어요. 다시 말씀해 주세요.")

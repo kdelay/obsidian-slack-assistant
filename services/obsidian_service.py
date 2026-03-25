@@ -336,6 +336,32 @@ class ObsidianService:
         self._write_lines(path, lines)
         return task_line.strip()
 
+    def mark_cancelled(self, d: date, task_text: str) -> bool:
+        """task_text와 가장 유사한 미완료 태스크를 취소 처리."""
+        path = self.get_monthly_file(d)
+        lines = self._read_lines(path)
+        start, end = self._find_date_section(lines, d)
+        if start == -1:
+            return False
+        best_ratio, best_idx = 0.0, -1
+        for i in range(start, end):
+            ln = lines[i].rstrip()
+            m = _TASK_LINE.match(ln)
+            if not m or m.group(1) in ("x", "-"):
+                continue
+            content = _DUE_DATE.sub("", _URGENCY.sub("", m.group(2))).strip()
+            sm = _SCHEDULED.match(content)
+            if sm:
+                content = sm.group(2)
+            ratio = SequenceMatcher(None, task_text, content).ratio()
+            if ratio > best_ratio:
+                best_ratio, best_idx = ratio, i
+        if best_idx == -1 or best_ratio < 0.5:
+            return False
+        lines[best_idx] = _TASK_LINE.sub(lambda m: f"- [-] {m.group(2)}", lines[best_idx])
+        self._write_lines(path, lines)
+        return True
+
     def mark_complete(self, d: date, task_text: str) -> bool:
         """task_text와 가장 유사한 미완료 태스크를 완료 처리."""
         path = self.get_monthly_file(d)
@@ -481,3 +507,195 @@ class ObsidianService:
                 if task and not task.is_complete:
                     result.setdefault(current_category, []).append(task)
         return result
+
+    def _get_category_at(self, lines: list[str], idx: int, section_start: int) -> Optional[str]:
+        """특정 인덱스에서 역방향으로 카테고리 헤더 찾기."""
+        for i in range(idx - 1, section_start, -1):
+            cm = _CATEGORY_HEADER.match(lines[i].rstrip())
+            if cm:
+                return cm.group(1)
+        return None
+
+    def delete_task(self, d: date, task_text: str) -> bool:
+        """task_text와 유사한 태스크 줄(+서브태스크) 삭제."""
+        path = self.get_monthly_file(d)
+        lines = self._read_lines(path)
+        start, end = self._find_date_section(lines, d)
+        if start == -1:
+            return False
+        best_ratio, best_idx = 0.0, -1
+        for i in range(start, end):
+            ln = lines[i].rstrip()
+            if ln.startswith("\t") or ln.startswith("    "):
+                continue
+            m = _TASK_LINE.match(ln)
+            if not m:
+                continue
+            content = _DUE_DATE.sub("", _URGENCY.sub("", m.group(2))).strip()
+            sm = _SCHEDULED.match(content)
+            if sm:
+                content = sm.group(2)
+            ratio = SequenceMatcher(None, task_text, content).ratio()
+            if ratio > best_ratio:
+                best_ratio, best_idx = ratio, i
+        if best_idx == -1 or best_ratio < 0.5:
+            return False
+        del_end = best_idx + 1
+        while del_end < end and (lines[del_end].startswith("\t") or lines[del_end].startswith("    ")):
+            del_end += 1
+        del lines[best_idx:del_end]
+        self._write_lines(path, lines)
+        return True
+
+    def move_task(self, from_date: date, task_text: str, to_date: date) -> bool:
+        """from_date의 task_text 태스크를 to_date로 이동."""
+        path = self.get_monthly_file(from_date)
+        lines = self._read_lines(path)
+        start, end = self._find_date_section(lines, from_date)
+        if start == -1:
+            return False
+        best_ratio, best_idx = 0.0, -1
+        for i in range(start, end):
+            ln = lines[i].rstrip()
+            if ln.startswith("\t") or ln.startswith("    "):
+                continue
+            m = _TASK_LINE.match(ln)
+            if not m:
+                continue
+            content = _DUE_DATE.sub("", _URGENCY.sub("", m.group(2))).strip()
+            sm = _SCHEDULED.match(content)
+            if sm:
+                content = sm.group(2)
+            ratio = SequenceMatcher(None, task_text, content).ratio()
+            if ratio > best_ratio:
+                best_ratio, best_idx = ratio, i
+        if best_idx == -1 or best_ratio < 0.5:
+            return False
+        category = self._get_category_at(lines, best_idx, start)
+        found = _parse_task_line(lines[best_idx].rstrip(), d=from_date, category=category)
+        if not found:
+            return False
+        del_end = best_idx + 1
+        while del_end < len(lines) and (lines[del_end].startswith("\t") or lines[del_end].startswith("    ")):
+            del_end += 1
+        del lines[best_idx:del_end]
+        self._write_lines(path, lines)
+        self.add_task(to_date, found.text, due_date=found.due_date,
+                      category=found.category, scheduled_time=found.scheduled_time, status="pending")
+        return True
+
+    def move_backlog_to_date(self, task_text: str, target_date: date) -> bool:
+        """백로그에서 task_text와 유사한 항목을 target_date로 이동."""
+        lines = self._read_lines(self.backlog_path)
+        if not lines:
+            return False
+        best_ratio, best_idx, best_task = 0.0, -1, None
+        current_category = "기타"
+        for i, line in enumerate(lines):
+            ln = line.rstrip()
+            m = re.match(r"^## (.+)$", ln)
+            if m:
+                current_category = m.group(1)
+                continue
+            if ln.startswith("- ["):
+                task = _parse_task_line(ln, category=current_category)
+                if task:
+                    ratio = SequenceMatcher(None, task_text, task.text).ratio()
+                    if ratio > best_ratio:
+                        best_ratio, best_idx, best_task = ratio, i, task
+        if best_idx == -1 or best_ratio < 0.5 or not best_task:
+            return False
+        del lines[best_idx]
+        for i, line in enumerate(lines):
+            if line.startswith("updated:"):
+                lines[i] = f"updated: {date.today().isoformat()}\n"
+                break
+        self._write_lines(self.backlog_path, lines)
+        self.add_task(target_date, best_task.text, category=best_task.category, status="pending")
+        return True
+
+    def search_tasks(self, keyword: str, months_back: int = 3) -> list:
+        """keyword를 포함하는 과거 태스크 검색 (최근 months_back개월)."""
+        today = date.today()
+        results = []
+        kw = keyword.lower()
+        for i in range(months_back + 1):
+            month = today.month - i
+            year = today.year
+            while month <= 0:
+                month += 12
+                year -= 1
+            path = self.todo_root / f"{year}년" / f"{month}월.md"
+            if not path.exists():
+                continue
+            lines = self._read_lines(path)
+            cur_date, cur_cat = None, None
+            for line in lines:
+                ln = line.rstrip()
+                dm = _DATE_HEADER.match(ln)
+                if dm:
+                    cur_date = date(year, int(dm.group(1)), int(dm.group(2)))
+                    cur_cat = None
+                    continue
+                cm = _CATEGORY_HEADER.match(ln)
+                if cm:
+                    cur_cat = cm.group(1)
+                    continue
+                if ln.startswith("- [") and not ln.startswith("\t"):
+                    task = _parse_task_line(ln, d=cur_date, category=cur_cat)
+                    if task and kw in task.text.lower():
+                        results.append(task)
+        return sorted(results, key=lambda t: t.task_date or date.min, reverse=True)
+
+    def get_overdue_tasks(self) -> list:
+        """마감일이 지났으나 미완료인 태스크 목록 (최근 3개월 스캔)."""
+        today = date.today()
+        overdue = []
+        for i in range(3):
+            month = today.month - i
+            year = today.year
+            while month <= 0:
+                month += 12
+                year -= 1
+            path = self.todo_root / f"{year}년" / f"{month}월.md"
+            if not path.exists():
+                continue
+            lines = self._read_lines(path)
+            cur_cat = None
+            for line in lines:
+                ln = line.rstrip()
+                cm = _CATEGORY_HEADER.match(ln)
+                if cm:
+                    cur_cat = cm.group(1)
+                    continue
+                if ln.startswith("- [") and not ln.startswith("\t"):
+                    task = _parse_task_line(ln, category=cur_cat)
+                    if (task and task.due_date and task.due_date < today
+                            and not task.is_complete and task.status != "cancelled"):
+                        overdue.append(task)
+        return sorted(overdue, key=lambda t: t.due_date)
+
+    def get_month_completed(self, year: int, month: int) -> list:
+        """특정 월의 완료된 태스크 목록."""
+        path = self.todo_root / f"{year}년" / f"{month}월.md"
+        if not path.exists():
+            return []
+        lines = self._read_lines(path)
+        results = []
+        cur_date, cur_cat = None, None
+        for line in lines:
+            ln = line.rstrip()
+            dm = _DATE_HEADER.match(ln)
+            if dm:
+                cur_date = date(year, int(dm.group(1)), int(dm.group(2)))
+                cur_cat = None
+                continue
+            cm = _CATEGORY_HEADER.match(ln)
+            if cm:
+                cur_cat = cm.group(1)
+                continue
+            if ln.startswith("- [") and not ln.startswith("\t"):
+                task = _parse_task_line(ln, d=cur_date, category=cur_cat)
+                if task and task.is_complete:
+                    results.append(task)
+        return results

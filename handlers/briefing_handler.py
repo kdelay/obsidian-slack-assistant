@@ -69,7 +69,7 @@ def _build_main_message(today: date, tasks: list, cal_events: list) -> str:
                 if t.scheduled_time:
                     text = f"`{t.scheduled_time}`  {text}"
                 if t.due_date:
-                    text += f"  ~{t.due_date.strftime('%m/%d')}~{'  ⚠️' if t.is_urgent else ''}"
+                    text += f"  `{t.due_date.strftime('%m/%d')}`{'  ⚠️' if t.is_urgent else ''}"
                 if t.is_complete or t.status == "cancelled":
                     parts.append(f"~{text}~")
                 elif t.status == "in_progress":
@@ -94,6 +94,17 @@ def _build_upcoming_message(upcoming: list) -> str:
         cat = f"[{t.category}] " if t.category else ""
         day_label = WEEKDAYS[t.due_date.weekday()]
         lines.append(f"• `{t.due_date.strftime('%m/%d')} ({day_label})` {urgency}{cat}{t.text}")
+    return "\n".join(lines)
+
+
+def _build_overdue_message(overdue: list) -> str:
+    if not overdue:
+        return ""
+    lines = ["⚠️ *기한 초과 태스크*\n"]
+    for t in overdue:
+        cat = f"[{t.category}] " if t.category else ""
+        days_late = (date.today() - t.due_date).days
+        lines.append(f"• `{t.due_date.strftime('%m/%d')}` ({days_late}일 경과) {cat}{t.text}")
     return "\n".join(lines)
 
 
@@ -148,6 +159,15 @@ async def send_morning_briefing(app, user_id: str = SLACK_CHANNEL_ID):
             thread_ts=thread_ts,
             text=_build_backlog_message(backlog),
         )
+
+        # 6. 스레드 3: 기한 초과 (있을 때만)
+        overdue = _obsidian.get_overdue_tasks()
+        if overdue:
+            await app.client.chat_postMessage(
+                channel=user_id,
+                thread_ts=thread_ts,
+                text=_build_overdue_message(overdue),
+            )
 
         log.info("브리핑 전송 완료")
     except Exception as e:
