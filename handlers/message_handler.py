@@ -11,6 +11,9 @@ _obsidian = ObsidianService(OBSIDIAN_VAULT)
 
 WEEKDAYS = ["월", "화", "수", "목", "금", "토", "일"]
 
+_history: dict[str, list] = {}
+_MAX_HISTORY = 8  # 최대 4회 교환 (user+assistant 쌍)
+
 
 _URL_RE = re.compile(r"https?://\S+")
 
@@ -87,9 +90,25 @@ def _fmt_day(tasks: list, cal_events: list[CalendarEvent]) -> str:
 
 async def handle_message(text: str, say, user: str):
     today = date.today()
-    intent_data = parse_intent(text, ANTHROPIC_API_KEY)
+    prev_history = _history.get(user, [])
+    intent_data = parse_intent(text, ANTHROPIC_API_KEY, history=prev_history)
     intent = intent_data.get("intent", "unknown")
     reply = intent_data.get("reply_message", "")
+    response_text = ""
+
+    _original_say = say
+
+    async def say_and_record(msg: str):
+        nonlocal response_text
+        response_text = msg
+        await _original_say(msg)
+        history = prev_history + [
+            {"role": "user", "content": text},
+            {"role": "assistant", "content": msg},
+        ]
+        _history[user] = history[-_MAX_HISTORY:]
+
+    say = say_and_record
 
     if intent == "add_task":
         task_text = intent_data.get("task_text")
@@ -139,10 +158,19 @@ async def handle_message(text: str, say, user: str):
         await say("\n".join(lines))
 
     elif intent == "add_backlog":
-        task_text = intent_data.get("task_text")
-        category = intent_data.get("category")
-        added = _obsidian.add_backlog(task_text, category)
-        await say(f"백로그에 추가했어요.\n> {added}")
+        backlog_tasks = intent_data.get("backlog_tasks")
+        if backlog_tasks:
+            lines = [f"{reply}\n"]
+            for item in backlog_tasks:
+                added = _obsidian.add_backlog(item.get("task_text", ""), item.get("category"))
+                lines.append(f"• {added}")
+            response_text = "\n".join(lines)
+        else:
+            task_text = intent_data.get("task_text")
+            category = intent_data.get("category")
+            added = _obsidian.add_backlog(task_text, category)
+            response_text = f"백로그에 추가했어요.\n> {added}"
+        await say(response_text)
 
     elif intent == "query_today":
         target_str = intent_data.get("target_date")
@@ -189,6 +217,19 @@ async def handle_message(text: str, say, user: str):
         if len(lines) == 1:
             await say("이번 주 등록된 일정과 할 일이 없어요.")
         else:
+            await say("\n".join(lines))
+
+    elif intent == "query_backlog":
+        backlog = _obsidian.get_backlog()
+        total = sum(len(v) for v in backlog.values())
+        if total == 0:
+            await say("📌 *백로그*\n백로그가 비어있어요!")
+        else:
+            lines = [f"📌 *백로그* ({total}개)\n"]
+            for cat, tasks in backlog.items():
+                cat_label = f"[{cat}] " if cat != "기타" else ""
+                for t in tasks:
+                    lines.append(f"• {cat_label}{t.text}")
             await say("\n".join(lines))
 
     elif intent == "query_upcoming":

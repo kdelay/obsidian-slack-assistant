@@ -242,7 +242,7 @@ class ObsidianService:
 
         carried = []
         for t in yesterday_tasks:
-            if t.status == "in_progress" and t.text.lower() not in today_texts:
+            if t.status in ("in_progress", "pending") and t.text.lower() not in today_texts:
                 self.add_task(to_date, t.text, category=t.category, status="in_progress")
                 carried.append(t.text)
         return carried
@@ -255,6 +255,7 @@ class ObsidianService:
         category: Optional[str] = None,
         scheduled_time: Optional[str] = None,
         status: str = "pending",
+        sub_tasks: Optional[list] = None,
     ) -> str:
         path = self.get_monthly_file(d)
         lines = self._read_lines(path)
@@ -301,6 +302,7 @@ class ObsidianService:
                         insert_pos = i
                         break
                 lines[insert_pos:insert_pos] = [cat_header, task_line]
+                task_actual_pos = insert_pos + 1
             else:
                 # 카테고리 마지막 태스크 뒤에 삽입
                 insert_pos = cat_pos + 1
@@ -313,6 +315,7 @@ class ObsidianService:
                 else:
                     insert_pos = len(lines)
                 lines.insert(insert_pos, task_line)
+                task_actual_pos = insert_pos
         else:
             # 카테고리 없음 → 날짜 섹션 내 마지막 태스크 뒤에 삽입
             insert_pos = start + 1
@@ -324,6 +327,11 @@ class ObsidianService:
                 if ln.startswith("- [") and not lines[i].startswith("\t"):
                     insert_pos = i + 1
             lines.insert(insert_pos, task_line)
+            task_actual_pos = insert_pos
+
+        if sub_tasks:
+            for j, sub in enumerate(sub_tasks):
+                lines.insert(task_actual_pos + 1 + j, f"\t- [ ] {sub}\n")
 
         self._write_lines(path, lines)
         return task_line.strip()

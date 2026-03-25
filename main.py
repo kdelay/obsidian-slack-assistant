@@ -7,7 +7,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from slack_bolt.async_app import AsyncApp
 from slack_bolt.adapter.socket_mode.async_handler import AsyncSocketModeHandler
 
-from config import BRIEFING_HOUR, SLACK_APP_TOKEN, SLACK_BOT_TOKEN, SLACK_CHANNEL_ID, SLACK_USER_ID
+from config import BRIEFING_HOUR, SLACK_APP_TOKEN, SLACK_BOT_TOKEN, SLACK_CHANNEL_ID
 from handlers.briefing_handler import send_morning_briefing
 from handlers.message_handler import handle_message
 
@@ -50,7 +50,7 @@ scheduler.add_job(
     "cron",
     hour=BRIEFING_HOUR,
     minute=0,
-    args=[app, SLACK_USER_ID],
+    args=[app, SLACK_CHANNEL_ID],
     id="morning_briefing",
     replace_existing=True,
 )
